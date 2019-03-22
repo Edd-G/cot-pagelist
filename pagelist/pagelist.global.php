@@ -28,12 +28,14 @@ require_once cot_incfile('page', 'module');
  * @param  boolean $sub        Include subcategories TRUE/FALSE
  * @param  string  $pagination Pagination parameter name for the URL, e.g. 'pld'. Make sure it does not conflict with other paginations.
  * @param  boolean $noself     Exclude the current page from the rowset for pages.
+ * @param  integer $offset     Number offcet items to show. 0 - no offcet
+ * @param  integer $cache_ttl  Cache lifetime in seconds, 0 disables cache
  * @return string              Parsed HTML
  */
-function pagelist($tpl = 'pagelist', $items = 0, $order = '', $condition = '', $cat = '', $blacklist = '', $whitelist = '', $sub = true, $pagination = 'pld', $noself = false, $offset = '0')
+function pagelist($tpl = 'pagelist', $items = 0, $order = '', $condition = '', $cat = '', $blacklist = '', $whitelist = '', $sub = true, $pagination = 'pld', $noself = false, $offset = 0, $cache_ttl = null)
 {
 
-	global $db, $db_pages, $env, $structure, $cot_extrafields, $cfg;
+	global $db, $db_pages, $env, $structure, $cot_extrafields, $cfg, $lang, $cache;
 
 	/* === Hook === */
 	foreach (array_merge(cot_getextplugins('pagelist.first')) as $pl)
@@ -137,15 +139,34 @@ function pagelist($tpl = 'pagelist', $items = 0, $order = '', $condition = '', $
 	/* ===== */
 	
 	$sql_order = empty($order) ? '' : "ORDER BY $order";
-	
-	$d = $d + $offset;
+
+	if((int)$offset > 0)
+	{
+		$d = $d + $offset;
+	}
+
 	$sql_limit = ($items > 0) ? "LIMIT $d, $items" : '';
 	
-	$res = $db->query("SELECT p.* $pagelist_join_columns
+	$sql_query = "SELECT p.* $pagelist_join_columns
 		FROM $db_pages AS p 
 		$pagelist_join_tables
 		WHERE page_state='0' $where_cat $where_condition
-		$sql_order $sql_limit");
+		$sql_order $sql_limit";
+	
+	$res = $db->query($sql_query);
+
+	// Return if cached
+	isset($md5hash) || $md5hash = 'pagelist_'.md5(str_replace($sys['now'], '_time_', $mskin.$lang.$sql_query));
+
+	if ($cache && (int)$cache_ttl > 0)
+	{
+		$page_query_html = $cache->disk->get($md5hash, 'page', (int)$cache_ttl);
+
+		if(!empty($page_query_html))
+		{
+			return $page_query_html;
+		}
+	}
 
 	$totalitems = $db->query("SELECT COUNT(*) FROM $db_pages AS p $pagelist_join_tables WHERE page_state='0' $where_cat $where_condition")->fetchColumn();
 
@@ -215,5 +236,12 @@ function pagelist($tpl = 'pagelist', $items = 0, $order = '', $condition = '', $
 	/* ===== */
 
 	$t->parse();
-	return $t->text();
+	$page_query_html = $t->text();
+
+	// Cache result
+	if ($cache && (int)$cache_ttl > 0)
+	{
+		$cache->disk->store($md5hash, $page_query_html, 'page');
+	}
+	return $page_query_html;
 }
